@@ -1,0 +1,151 @@
+import re
+import pandas as pd
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# =============================================
+# TEXT CLEANING + QUESTION DETECTION
+# =============================================
+def clean_text(t):
+    if not isinstance(t, str):
+        return ""
+    t = t.strip()
+    t = re.sub(r'\s+', ' ', t)
+    return t
+
+QUESTION_PATTERNS = [
+    r'\?$',
+    r'^\s*(who|what|when|where|why|how|which|whom|whose)\b',
+    r'\bcan you\b', r'\bcan we\b',
+    r'\bcould you\b', r'\bwould you\b',
+    r'\bdo you\b', r'\bdo we\b',
+    r'\bis there\b', r'\bany update\b'
+]
+QUESTION_RE = re.compile("|".join(QUESTION_PATTERNS), flags=re.IGNORECASE)
+
+def is_question(text):
+    text = text.strip()
+    if '?' in text:
+        return True
+    if QUESTION_RE.search(text):
+        return True
+    return False
+
+
+# =============================================
+# LIVE CHAT Q/A TRACKER CLASS
+# =============================================
+class LiveChatQA:
+    def __init__(self, window_size=8, similarity_threshold=0.18):
+        self.window_size = window_size
+        self.similarity_threshold = similarity_threshold
+        self.history = []  # all messages list of dicts
+        self.open_questions = []  # unresolved questions
+        self.resolved = []  # resolved question-answer pairs
+
+    def add_message(self, speaker, text, timestamp=None):
+        """Simulate receiving a new chat message."""
+        text = clean_text(text)
+
+        msg = {
+            "speaker": speaker,
+            "text": text,
+            "timestamp": timestamp
+        }
+        self.history.append(msg)
+
+        # ------------------------------------------------------
+        # IF this is a question, add to open_questions
+        # ------------------------------------------------------
+        if is_question(text):
+            self.open_questions.append({
+                "question": text,
+                "speaker": speaker,
+                "timestamp": timestamp,
+                "index": len(self.history)-1  # message index
+            })
+            return  # no answer yet
+
+        # ------------------------------------------------------
+        # OTHERWISE: check if this new message answers any open Qs
+        # ------------------------------------------------------
+        self.match_answers()
+
+    def match_answers(self):
+        if not self.open_questions:
+            return
+
+        # Prepare TF-IDF vectors from the last N messages for local matching
+        recent_texts = [m["text"] for m in self.history[-self.window_size:]]
+        vectorizer = TfidfVectorizer(stop_words="english")
+        tfidf_matrix = vectorizer.fit_transform(recent_texts)
+
+        # The latest message is a candidate answer
+        answer_index_global = len(self.history) - 1
+        candidate_answer = self.history[-1]["text"]
+        ans_vec = vectorizer.transform([candidate_answer])
+
+        # Compare answer to all open questions
+        for q in list(self.open_questions):
+            q_vec = vectorizer.transform([q["question"]])
+            sim = float(cosine_similarity(q_vec, ans_vec)[0][0])
+
+            if sim >= self.similarity_threshold:
+                # RESOLVE the question
+                q_resolved = {
+                    "question": q["question"],
+                    "question_speaker": q["speaker"],
+                    "question_timestamp": q["timestamp"],
+                    "answer": candidate_answer,
+                    "answer_speaker": self.history[-1]["speaker"],
+                    "answer_timestamp": self.history[-1]["timestamp"],
+                    "similarity": sim,
+                    "lag_messages": answer_index_global - q["index"]
+                }
+                self.resolved.append(q_resolved)
+                self.open_questions.remove(q)
+
+    def get_status(self):
+        """Return open vs resolved Q/A."""
+        return {
+            "open_questions": list(self.open_questions),
+            "resolved": list(self.resolved)
+        }
+
+    def resolved_df(self):
+        if not self.resolved:
+            return pd.DataFrame()
+        return pd.DataFrame(self.resolved)
+
+    def open_df(self):
+        if not self.open_questions:
+            return pd.DataFrame()
+        return pd.DataFrame(self.open_questions)
+
+
+# =============================================
+# DEMO / SAMPLE CHAT
+# =============================================
+sample_chat = [
+    ("Alice", "Hi everyone, let's begin the session.", "10:00"),
+    ("Bob", "What is the status of the release?", "10:01"),
+    ("Alice", "We will deploy to staging today.", "10:02"),
+    ("Charlie", "How long will the DB migration take?", "10:03"),
+    ("Alice", "The migration should take about 45 minutes.", "10:04"),
+    ("Bob", "Thanks!", "10:05"),
+    ("Charlie", "Do we need to inform the client?", "10:06"),
+    ("Alice", "Yes, please send them an email.", "10:07")
+]
+
+# Run the Q/A extractor
+qa = LiveChatQA(window_size=6, similarity_threshold=0.18)
+
+for speaker, text, ts in sample_chat:
+    qa.add_message(speaker, text, ts)
+
+print("=== RESOLVED Q/A PAIRS ===")
+print(qa.resolved_df())
+
+print("\n=== OPEN (UNANSWERED) QUESTIONS ===")
+print(qa.open_df())

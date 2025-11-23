@@ -1,0 +1,14 @@
+=== RESOLVED Q/A PAIRS ===
+                               question question_speaker question_timestamp  \
+0  How long will the DB migration take?          Charlie              10:03   
+
+                                        answer answer_speaker  \
+0  The migration should take about 45 minutes.          Alice   
+
+  answer_timestamp  similarity  lag_messages  
+0            10:04    0.245544             1  
+
+=== OPEN (UNANSWERED) QUESTIONS ===
+                             question  speaker timestamp  index
+0  What is the status of the release?      Bob     10:01      1
+1    Do we need to inform the client?  Charlie     10:06      6
